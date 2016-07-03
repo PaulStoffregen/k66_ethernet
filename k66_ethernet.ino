@@ -36,6 +36,7 @@ void setup()
 {
 	while (!Serial) ; // wait
 	print("Ethernet Testing");
+	print("----------------\n");
 	MPU_RGDAAC0 |= 0x007C0000;
 	SIM_SCGC2 |= SIM_SCGC2_ENET;
 	CORE_PIN3_CONFIG =  PORT_PCR_MUX(4); // RXD1
@@ -79,6 +80,7 @@ void setup()
 	tx_ring[TXSIZE-1].flags = 0x2000; // wrap flag
 
 	ENET_EIMR = 0;
+	ENET_MSCR = ENET_MSCR_MII_SPEED(15);  // 12 is fastest which seems to work
 	ENET_RCR = ENET_RCR_NLC | ENET_RCR_MAX_FL(1522) | ENET_RCR_CFEN |
 		ENET_RCR_CRCFWD | ENET_RCR_PADEN | ENET_RCR_RMII_MODE |
 		/* ENET_RCR_FCE | */ ENET_RCR_PROM | ENET_RCR_MII_MODE;
@@ -101,6 +103,9 @@ void setup()
 	ENET_ECR = 0xF0000000 | ENET_ECR_DBSWP | ENET_ECR_EN1588 | ENET_ECR_ETHEREN;
 	ENET_RDAR = ENET_RDAR_RDAR;
 	ENET_TDAR = ENET_TDAR_TDAR;
+
+	printhex("MDIO PHY ID2 (LAN8720A should be 0007): ", mdio_read(0, 2));
+	printhex("MDIO PHY ID3 (LAN8720A should be C0F?): ", mdio_read(0, 3));
 }
 
 // watch for data to arrive
@@ -249,6 +254,39 @@ void outgoing(void *packet, unsigned int len)
 		}
 	}
 }
+
+// read a PHY register (using MDIO & MDC signals)
+uint16_t mdio_read(int phyaddr, int regaddr)
+{
+	ENET_MMFR = ENET_MMFR_ST(1) | ENET_MMFR_OP(2) | ENET_MMFR_TA(0)
+		| ENET_MMFR_PA(phyaddr) | ENET_MMFR_RA(regaddr);
+	// TODO: what is the proper value for ENET_MMFR_TA ???
+	//int count=0;
+	while ((ENET_EIR & ENET_EIRM_MII) == 0) {
+		//count++; // wait
+	}
+	//print("mdio read waited ", count);
+	uint16_t data = ENET_MMFR;
+	ENET_EIR = ENET_EIRM_MII;
+	//printhex("mdio read:", data);
+	return data;
+}
+
+// write a PHY register (using MDIO & MDC signals)
+void mdio_write(int phyaddr, int regaddr, uint16_t data)
+{
+	ENET_MMFR = ENET_MMFR_ST(1) | ENET_MMFR_OP(1) | ENET_MMFR_TA(0)
+		| ENET_MMFR_PA(phyaddr) | ENET_MMFR_RA(regaddr) | ENET_MMFR_DATA(data);
+	// TODO: what is the proper value for ENET_MMFR_TA ???
+	//int count=0;
+	while ((ENET_EIR & ENET_EIRM_MII) == 0) {
+		//count++; // wait
+	}
+	ENET_EIR = ENET_EIRM_MII;
+	//print("mdio write waited ", count);
+	//printhex("mdio write :", data);
+}
+
 
 // misc print functions, for lots of info in the serial monitor.
 // this stuff probably slows things down and would need to go
