@@ -1,4 +1,4 @@
-
+#include "IPAddress.h"
 
 typedef struct {
 	uint16_t length;
@@ -18,7 +18,8 @@ typedef struct {
 static enetbufferdesc_t rx_ring[RXSIZE] __attribute__ ((aligned(16)));
 static enetbufferdesc_t tx_ring[TXSIZE] __attribute__ ((aligned(16)));
 
-uint32_t packet[128];
+uint32_t rxbufs[RXSIZE*128] __attribute__ ((aligned(16)));
+uint32_t txbufs[TXSIZE*128] __attribute__ ((aligned(16)));
 
 #define MACADDR1 0x04E9E5
 #define MACADDR2 0x000001
@@ -61,9 +62,12 @@ void setup()
 
 	for (int i=0; i < RXSIZE; i++) {
 		rx_ring[i].flags = 0x8000; // empty flag
-		rx_ring[i].buffer = packet;
+		rx_ring[i].buffer = rxbufs + i * 128;
 	}
 	rx_ring[RXSIZE-1].flags = 0xA000; // empty & wrap flags
+	for (int i=0; i < TXSIZE; i++) {
+		tx_ring[i].buffer = txbufs + i * 128;
+	}
 	tx_ring[TXSIZE-1].flags = 0x2000; // wrap flag
 
 	ENET_EIMR = 0;
@@ -98,7 +102,7 @@ void loop()
 	buf = rx_ring + rxnum;
 
 	if ((buf->flags & 0x8000) == 0) {
-		print("data, len=", buf->length);
+		incoming(buf->buffer, buf->length);
 		if (rxnum < RXSIZE-1) {
 			buf->flags = 0x8000;
 			rxnum++;
@@ -109,21 +113,89 @@ void loop()
 	}
 }
 
+void incoming(void *packet, unsigned int len)
+{
+	const uint8_t *p8;
+	const uint16_t *p16;
+	const uint32_t *p32;
+	IPAddress src, dst;
+	uint16_t type;
+	unsigned int i;
+
+	Serial.println();
+	print("data, len=", len);
+	p8 = (const uint8_t *)packet + 2;
+	p16 = (const uint16_t *)p8;
+	p32 = (const uint32_t *)packet;
+	type = p16[6];
+	if (type == 0x0008) {
+		src = p32[7];
+		dst = p32[8];
+		Serial.print("IPv4 Packet, src=");
+		Serial.print(src);
+		Serial.print(", dst=");
+		Serial.print(dst);
+		Serial.println();
+		for (i=0; i < len-2; i++) {
+			Serial.printf(" %02X", p8[i]);
+			if ((i & 15) == 15) Serial.println();
+		}
+		Serial.println();
+		if (p8[23] == 1) {
+			Serial.println("  Protocol is ICMP:");
+			if (p8[34] == 8) {
+				print("  echo request:");
+				uint16_t id = __builtin_bswap16(p16[19]);
+				uint16_t seqnum = __builtin_bswap16(p16[20]);
+				printhex("   id = ", id);
+				printhex("   sequence number = ", seqnum);
+			}
+		}
+	} else if (type == 0x0608) {
+		Serial.println("ARP Packet:");
+		for (i=0; i < len-2; i++) {
+			Serial.printf(" %02X", p8[i]);
+			if ((i & 15) == 15) Serial.println();
+		}
+		Serial.println();
+		if (p32[4] == 0x00080100 && p32[5] == 0x01000406) {
+			// request is for IPv4 address of ethernet mac
+			IPAddress from((p16[15] << 16) | p16[14]);
+			IPAddress to(p32[10]);
+			Serial.print("  Request for ");
+			Serial.print(to);
+			Serial.print(" from ");
+			Serial.print(from);
+			Serial.print(" (");
+			printmac(p8 + 22);
+			Serial.println(")");
+		}
+	}
+}
 
 
 void print(const char *s)
 {
 	Serial.println(s);
-	delay(10);
 }
 
 void print(const char *s, int num)
 {
 	Serial.print(s);
 	Serial.println(num);
-	delay(10);
 }
 
+void printhex(const char *s, int num)
+{
+	Serial.print(s);
+	Serial.println(num, HEX);
+}
+
+void printmac(const uint8_t *data)
+{
+	Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X",
+		data[0], data[1], data[2], data[3], data[4], data[5]);
+}
 
 
 
