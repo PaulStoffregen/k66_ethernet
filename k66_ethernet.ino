@@ -1,5 +1,10 @@
 #include "IPAddress.h"
 
+IPAddress myaddress(192, 168, 194, 66);
+
+#define MACADDR1 0x04E9E5
+#define MACADDR2 0x000001
+
 typedef struct {
 	uint16_t length;
 	uint16_t flags;
@@ -17,12 +22,8 @@ typedef struct {
 #define TXSIZE 10
 static enetbufferdesc_t rx_ring[RXSIZE] __attribute__ ((aligned(16)));
 static enetbufferdesc_t tx_ring[TXSIZE] __attribute__ ((aligned(16)));
-
 uint32_t rxbufs[RXSIZE*128] __attribute__ ((aligned(16)));
 uint32_t txbufs[TXSIZE*128] __attribute__ ((aligned(16)));
-
-#define MACADDR1 0x04E9E5
-#define MACADDR2 0x000001
 
 void setup()
 {
@@ -73,11 +74,11 @@ void setup()
 	ENET_EIMR = 0;
 	ENET_RCR = ENET_RCR_NLC | ENET_RCR_MAX_FL(1522) | ENET_RCR_CFEN |
 		ENET_RCR_CRCFWD | ENET_RCR_PADEN | ENET_RCR_RMII_MODE |
-		ENET_RCR_FCE | ENET_RCR_PROM | ENET_RCR_MII_MODE;
-	ENET_TCR = ENET_TCR_ADDINS | ENET_TCR_RFC_PAUSE | ENET_TCR_TFC_PAUSE |
+		/* ENET_RCR_FCE | */ ENET_RCR_PROM | ENET_RCR_MII_MODE;
+	ENET_TCR = ENET_TCR_ADDINS | /* ENET_TCR_RFC_PAUSE | ENET_TCR_TFC_PAUSE | */
 		ENET_TCR_FDEN;
-	ENET_PALR = (MACADDR1 << 24) | MACADDR2;
-	ENET_PAUR = ((0x04E9E5 << 8) & 0xFFFF0000) | 0x8808;
+	ENET_PALR = (MACADDR1 << 8) | ((MACADDR2 >> 16) & 255);
+	ENET_PAUR = ((MACADDR2 << 8) & 0xFFFF0000) | 0x8808;
 	ENET_OPD = 0x10014;
 	ENET_IAUR = 0;
 	ENET_IALR = 0;
@@ -162,17 +163,73 @@ void incoming(void *packet, unsigned int len)
 			// request is for IPv4 address of ethernet mac
 			IPAddress from((p16[15] << 16) | p16[14]);
 			IPAddress to(p32[10]);
-			Serial.print("  Request for ");
+			Serial.print("  Who is ");
 			Serial.print(to);
 			Serial.print(" from ");
 			Serial.print(from);
 			Serial.print(" (");
 			printmac(p8 + 22);
 			Serial.println(")");
+			if (to == myaddress) {
+				arp_reply(p8+22, from);
+			}
 		}
 	}
 }
 
+void arp_reply(const uint8_t *mac, IPAddress &ip)
+{
+	uint32_t packet[11]; // 42 bytes needed + 2 pad
+	uint8_t *p = (uint8_t *)packet + 2;
+
+	packet[0] = 0;       // first 2 bytes are padding
+	memcpy(p, mac, 6);
+	//memset(p + 6, 0, 6); // hardware adds our mac addr
+	p[6] = (MACADDR1 >> 16) & 255;
+	p[7] = (MACADDR1 >> 8) & 255;
+	p[8] = (MACADDR1) & 255;
+	p[9] = (MACADDR2 >> 16) & 255;
+	p[10] = (MACADDR2 >> 8) & 255;
+	p[11] = (MACADDR2) & 255;
+	p[12] = 8;
+	p[13] = 6;  // arp protocol
+	packet[4] = 0x00080100; // IPv4 on ethernet
+	packet[5] = 0x02000406; // reply, ip 4 byte, macaddr 6 bytes
+	packet[6] = (__builtin_bswap32(MACADDR1) >> 8) | ((MACADDR2 << 8) & 0xFF000000);
+	packet[7] = __builtin_bswap16(MACADDR2 & 0xFFFF) | ((uint32_t)myaddress << 16);
+	packet[8] = (((uint32_t)myaddress & 0xFFFF0000) >> 16) | (mac[0] << 16) | (mac[1] << 24);
+	packet[9] = (mac[5] << 24) | (mac[4] << 16) | (mac[3] << 8) | mac[2];
+	packet[10] = (uint32_t)ip;
+	Serial.println("ARP Reply:");
+	for (int i=0; i < 42; i++) {
+		Serial.printf(" %02X", p[i]);
+		if ((i & 15) == 15) Serial.println();
+	}
+	Serial.println();
+	outgoing(packet, 44);
+}
+
+void outgoing(void *packet, unsigned int len)
+{
+	static int txnum=0;
+	volatile enetbufferdesc_t *buf;
+	uint16_t flags;
+
+	buf = tx_ring + txnum;
+	flags = buf->flags;
+	if ((flags & 0x8000) == 0) {
+		print("tx, num=", txnum);
+		buf->length = len;
+		memcpy(buf->buffer, packet, len);
+		buf->flags = flags | 0x8C00;
+		ENET_TDAR = ENET_TDAR_TDAR;
+		if (txnum < TXSIZE-1) {
+			txnum++;
+		} else {
+			txnum = 0;
+		}
+	}
+}
 
 void print(const char *s)
 {
