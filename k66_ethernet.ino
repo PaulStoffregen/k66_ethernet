@@ -1,9 +1,15 @@
 #include "IPAddress.h"
 
-IPAddress myaddress(192, 168, 194, 66);
+// set this to an unused IP number for your network
+IPAddress myaddress(192, 168, 194, 67);
 
 #define MACADDR1 0x04E9E5
 #define MACADDR2 0x000001
+
+// This test program prints a *lot* of info to the Arduino Serial Monitor
+// Ping response time is approx 1.3 ms with 180 MHz clock, due to all the
+// time spent printing.  To get a realistic idea of ping time, you would
+// need to delete or comment out all the Serial print stuff.
 
 typedef struct {
 	uint16_t length;
@@ -25,6 +31,7 @@ static enetbufferdesc_t tx_ring[TXSIZE] __attribute__ ((aligned(16)));
 uint32_t rxbufs[RXSIZE*128] __attribute__ ((aligned(16)));
 uint32_t txbufs[TXSIZE*128] __attribute__ ((aligned(16)));
 
+// initialize the ethernet hardware
 void setup()
 {
 	while (!Serial) ; // wait
@@ -88,6 +95,7 @@ void setup()
 	ENET_TDSR = (uint32_t)tx_ring;
 	ENET_MRBR = 512;
 	ENET_TACC = ENET_TACC_SHIFT16;
+	//ENET_TACC = ENET_TACC_SHIFT16 | ENET_TACC_IPCHK | ENET_TACC_PROCHK;
 	ENET_RACC = ENET_RACC_SHIFT16;
 
 	ENET_ECR = 0xF0000000 | ENET_ECR_DBSWP | ENET_ECR_EN1588 | ENET_ECR_ETHEREN;
@@ -95,6 +103,7 @@ void setup()
 	ENET_TDAR = ENET_TDAR_TDAR;
 }
 
+// watch for data to arrive
 void loop()
 {
 	static int rxnum=0;
@@ -114,6 +123,7 @@ void loop()
 	}
 }
 
+// when we get data, try to parse it
 void incoming(void *packet, unsigned int len)
 {
 	const uint8_t *p8;
@@ -121,7 +131,6 @@ void incoming(void *packet, unsigned int len)
 	const uint32_t *p32;
 	IPAddress src, dst;
 	uint16_t type;
-	unsigned int i;
 
 	Serial.println();
 	print("data, len=", len);
@@ -137,28 +146,21 @@ void incoming(void *packet, unsigned int len)
 		Serial.print(", dst=");
 		Serial.print(dst);
 		Serial.println();
-		for (i=0; i < len-2; i++) {
-			Serial.printf(" %02X", p8[i]);
-			if ((i & 15) == 15) Serial.println();
-		}
-		Serial.println();
-		if (p8[23] == 1) {
+		printpacket(p8, len - 2);
+		if (p8[23] == 1 && dst == myaddress) {
 			Serial.println("  Protocol is ICMP:");
 			if (p8[34] == 8) {
 				print("  echo request:");
 				uint16_t id = __builtin_bswap16(p16[19]);
 				uint16_t seqnum = __builtin_bswap16(p16[20]);
 				printhex("   id = ", id);
-				printhex("   sequence number = ", seqnum);
+				print("   sequence number = ", seqnum);
+				ping_reply((uint32_t *)packet, len);
 			}
 		}
 	} else if (type == 0x0608) {
 		Serial.println("ARP Packet:");
-		for (i=0; i < len-2; i++) {
-			Serial.printf(" %02X", p8[i]);
-			if ((i & 15) == 15) Serial.println();
-		}
-		Serial.println();
+		printpacket(p8, len - 2);
 		if (p32[4] == 0x00080100 && p32[5] == 0x01000406) {
 			// request is for IPv4 address of ethernet mac
 			IPAddress from((p16[15] << 16) | p16[14]);
@@ -177,6 +179,7 @@ void incoming(void *packet, unsigned int len)
 	}
 }
 
+// compose an answer to ARP requests
 void arp_reply(const uint8_t *mac, IPAddress &ip)
 {
 	uint32_t packet[11]; // 42 bytes needed + 2 pad
@@ -184,13 +187,13 @@ void arp_reply(const uint8_t *mac, IPAddress &ip)
 
 	packet[0] = 0;       // first 2 bytes are padding
 	memcpy(p, mac, 6);
-	//memset(p + 6, 0, 6); // hardware adds our mac addr
-	p[6] = (MACADDR1 >> 16) & 255;
-	p[7] = (MACADDR1 >> 8) & 255;
-	p[8] = (MACADDR1) & 255;
-	p[9] = (MACADDR2 >> 16) & 255;
-	p[10] = (MACADDR2 >> 8) & 255;
-	p[11] = (MACADDR2) & 255;
+	memset(p + 6, 0, 6); // hardware automatically adds our mac addr
+	//p[6] = (MACADDR1 >> 16) & 255;
+	//p[7] = (MACADDR1 >> 8) & 255;
+	//p[8] = (MACADDR1) & 255;
+	//p[9] = (MACADDR2 >> 16) & 255; // this is how to do it the hard way
+	//p[10] = (MACADDR2 >> 8) & 255;
+	//p[11] = (MACADDR2) & 255;
 	p[12] = 8;
 	p[13] = 6;  // arp protocol
 	packet[4] = 0x00080100; // IPv4 on ethernet
@@ -201,14 +204,30 @@ void arp_reply(const uint8_t *mac, IPAddress &ip)
 	packet[9] = (mac[5] << 24) | (mac[4] << 16) | (mac[3] << 8) | mac[2];
 	packet[10] = (uint32_t)ip;
 	Serial.println("ARP Reply:");
-	for (int i=0; i < 42; i++) {
-		Serial.printf(" %02X", p[i]);
-		if ((i & 15) == 15) Serial.println();
-	}
-	Serial.println();
+	printpacket(p, 42);
 	outgoing(packet, 44);
 }
 
+// compose an reply to pings
+void ping_reply(const uint32_t *recv, unsigned int len)
+{
+	uint32_t packet[32];
+	uint8_t *p8 = (uint8_t *)packet + 2;
+
+	if (len > sizeof(packet)) return;
+	memcpy(packet, recv, len);
+	memcpy(p8, p8 + 6, 6); // send to the mac address we received
+	// hardware automatically adds our mac addr
+	packet[8] = packet[7]; // send to the IP number we received
+	packet[7] = (uint32_t)myaddress;
+	p8[34] = 0;            // type = echo reply
+	// TODO: checksums in IP and ICMP headers - is the hardware
+	// really inserting correct checksums automatically?
+	printpacket((uint8_t *)packet + 2, len - 2);
+	outgoing(packet, len);
+}
+
+// transmit a packet
 void outgoing(void *packet, unsigned int len)
 {
 	static int txnum=0;
@@ -230,6 +249,10 @@ void outgoing(void *packet, unsigned int len)
 		}
 	}
 }
+
+// misc print functions, for lots of info in the serial monitor.
+// this stuff probably slows things down and would need to go
+// for any hope of keeping up with full ethernet data rate!
 
 void print(const char *s)
 {
@@ -254,6 +277,17 @@ void printmac(const uint8_t *data)
 		data[0], data[1], data[2], data[3], data[4], data[5]);
 }
 
+void printpacket(const uint8_t *data, unsigned int len)
+{
+#if 1
+	unsigned int i;
 
+	for (i=0; i < len; i++) {
+		Serial.printf(" %02X", *data++);
+		if ((i & 15) == 15) Serial.println();
+	}
+	Serial.println();
+#endif
+}
 
 
