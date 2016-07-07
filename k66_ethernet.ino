@@ -126,6 +126,12 @@ void loop()
 			rxnum = 0;
 		}
 	}
+	// TODO: if too many packets arrive too quickly, which is
+	// a distinct possibility when we spend so much time printing
+	// to the serial monitor, ENET_RDAR_RDAR can be cleared if
+	// the receive ring buffer fills up.  After we free up space,
+	// ENET_RDAR_RDAR needs to be set again to restart reception
+	// of incoming packets.
 }
 
 // when we get data, try to parse it
