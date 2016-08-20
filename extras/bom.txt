@@ -1,0 +1,21 @@
+Qty  Part                               Digikey
+---  ----                               -------
+1    LAN8720A                           LAN8720A-CP-CT-ND
+1    CAT811T                            CAT811TTBI-GT3OSCT-ND
+1    Crystal, 25 MHz                    535-13419-1-ND
+1    Transformer, Pulse H1102FNL        553-2204-1-ND
+1    Connector, RJ45                    A102068CT-ND
+1    Capacitor, 1nF, 2000V              709-1036-1-ND
+2    Capacitor, 33pF                    490-5936-1-ND
+1    Capacitor, 470pF                   490-1297-1-ND
+3    Capacitor, 10nF                    445-1260-1-ND
+1    Capacitor, 22nF                    490-8022-1-ND
+3    Capacitor, 1uF                     399-5090-1-ND
+4    Resistor, 75, 1%                   RHM75.0HCT-ND
+4    Resistor, 49.9, 1%                 RMCF0402FT49R9CT-ND
+2    Resistor, 330, 1%                  311-330LRCT-ND
+1    Resistor, 1.5K, 1%                 311-1.50KLRCT-ND
+2    Resistor, 12.1K, 1%                P12.1KLCT-ND
+1    Inductor, Ferrite bead             553-2387-1-ND
+2    LED, Greeen                        475-1410-1-ND
+
